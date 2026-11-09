@@ -536,7 +536,7 @@
 
   function hitBad(){
     lives -= 1;
-    player.invuln = 1.1;
+    player.invuln = 0.7;
     shakeT = 0.35;
     flashEl.style.background = 'rgba(255,40,40,0.55)';
     setTimeout(()=>{ flashEl.style.background = 'rgba(255,40,40,0.0)'; }, 140);
@@ -608,8 +608,8 @@
     if(shakeT > 0){
       drawX += rand(-5,5); drawY += rand(-3,3);
     }
-    const blink = player.invuln > 0 && Math.floor(player.invuln*14)%2===0;
-    if(blink) ctx.globalAlpha = 0.35;
+    const blink = player.invuln > 0 && Math.floor(player.invuln*9)%2===0;
+    if(blink) ctx.globalAlpha = 0.65;
 
     // halo
     const grad = ctx.createRadialGradient(drawX,drawY,player.r*0.2,drawX,drawY,player.r*1.35);
@@ -752,7 +752,6 @@
     running = true;
     lastTime = 0;
     requestAnimationFrame(loop);
-    Audio_.startMusic();
   }
 
   function endGame(won){
