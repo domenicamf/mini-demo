@@ -455,19 +455,60 @@
       [392,329.63,261.63].forEach((f,i)=> tone(f, t+i*0.14, 0.26, 'sawtooth', 0.22));
     }
 
-    // tiny procedural background loop: dark minor arpeggio + bass pulse
-    const scale = [220,261.63,293.66,329.63,392,440]; // A minor-ish, night-arcade vibe
+    // tiny procedural background loop: moody piano chords + a simple hip-hop-ish
+    // kick/hat pulse. Original chord voicings only — not any existing song's melody.
+    function pianoNote(freq, t, dur, peak, dest){
+      if(!ctx) return;
+      [1, 1.004].forEach((detune, i)=>{
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq*detune, t);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime((peak||0.22) * (i===0?1:0.55), t+0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+        osc.connect(g); g.connect(dest||musicGain);
+        osc.start(t); osc.stop(t+dur+0.05);
+      });
+    }
+    function kick(t, peak){
+      if(!ctx) return;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(140, t);
+      osc.frequency.exponentialRampToValueAtTime(46, t+0.12);
+      g.gain.setValueAtTime(peak||0.45, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t+0.2);
+      osc.connect(g); g.connect(musicGain);
+      osc.start(t); osc.stop(t+0.22);
+    }
+    function hihat(t, peak){
+      if(!ctx) return;
+      const bufSize = Math.floor(ctx.sampleRate*0.04);
+      const buf = ctx.createBuffer(1,bufSize,ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for(let i=0;i<bufSize;i++){ data[i] = (Math.random()*2-1) * (1 - i/bufSize); }
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const filt = ctx.createBiquadFilter(); filt.type='highpass'; filt.frequency.setValueAtTime(6500,t);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(peak||0.1, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t+0.035);
+      src.connect(filt); filt.connect(g); g.connect(musicGain);
+      src.start(t);
+    }
+    // dark A-minor-ish chord tones (original voicings, no borrowed melody)
+    const chordRoot = 110, chordThird = 130.81, chordFifth = 164.81, chordHigh = 220;
     function scheduleMusicStep(){
       if(!ctx) return;
       const t = ctx.currentTime + 0.05;
-      const bassNotes = [110,110,130.81,98];
-      const bass = bassNotes[musicStep % bassNotes.length];
-      tone(bass, t, 0.5, 'sine', 0.22, musicGain);
-      const arp = scale[(musicStep*3) % scale.length];
-      tone(arp, t+0.0, 0.16, 'square', 0.07, musicGain);
-      tone(scale[(musicStep*3+2) % scale.length], t+0.25, 0.16, 'square', 0.06, musicGain);
+      const beat = musicStep % 4;
+      if(beat === 0){ kick(t, 0.45); pianoNote(chordRoot, t, 1.1, 0.2); pianoNote(chordHigh, t, 1.1, 0.1); }
+      else if(beat === 1){ hihat(t, 0.09); }
+      else if(beat === 2){ kick(t, 0.32); pianoNote(chordThird, t, 0.8, 0.16); }
+      else { hihat(t, 0.09); if((musicStep>>2) % 2 === 1) pianoNote(chordFifth, t, 0.6, 0.12); }
       musicStep++;
-      const stepDur = Math.max(260, 520 - (fallSpeedMul*30)); // tempo creeps up with difficulty
+      const stepDur = Math.max(300, 580 - (fallSpeedMul*28)); // tempo creeps up with difficulty
       musicTimer = setTimeout(scheduleMusicStep, stepDur);
     }
 
