@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Bring Me Down</title>
 <style>
   /* Layout concept: a single full-bleed night-sky stage (fixed canvas game),
@@ -52,10 +57,11 @@
     text-shadow: 0 2px 18px rgba(255,77,121,0.35);
   }
   .subtitle{
-    font-size:clamp(13px, 4vw, 16px);
+    font-size:clamp(16px, 5vw, 19px);
+    font-weight:700;
     color:#e8d3ff;
     margin:0 0 18px 0;
-    opacity:0.9;
+    opacity:0.95;
   }
   .tag{
     display:inline-block;
@@ -76,9 +82,9 @@
     object-fit:cover;
   }
   .instructions{
-    max-width:320px;
-    font-size:14px;
-    line-height:1.55;
+    max-width:340px;
+    font-size:17px;
+    line-height:1.6;
     color:#f1e4ff;
     margin:0 0 26px 0;
   }
@@ -86,8 +92,8 @@
   .legendRow{
     display:flex; gap:18px; justify-content:center; margin-bottom:22px; flex-wrap:wrap;
   }
-  .legendItem{ font-size:13px; display:flex; flex-direction:column; align-items:center; gap:4px; color:#e8d3ff;}
-  .legendIcon{ font-size:19px; font-weight:800; letter-spacing:0.5px; color:var(--gold); }
+  .legendItem{ font-size:15px; display:flex; flex-direction:column; align-items:center; gap:5px; color:#e8d3ff;}
+  .legendIcon{ font-size:22px; font-weight:800; letter-spacing:0.5px; color:var(--gold); }
 
   button.playBtn{
     appearance:none; border:none; cursor:pointer;
@@ -150,7 +156,7 @@
 
   #finalMsg{
     max-width:340px;
-    font-size:16px;
+    font-size:18px;
     line-height:1.6;
     color:#fff;
     font-weight:600;
@@ -165,10 +171,30 @@
     position:absolute; inset:0; background:rgba(255,40,40,0.0);
     pointer-events:none; z-index:6; transition:background .08s;
   }
+
+  #muteBtn{
+    position:fixed;
+    bottom:calc(16px + env(safe-area-inset-bottom,0px));
+    right:calc(16px + env(safe-area-inset-right,0px));
+    z-index:30;
+    width:44px; height:44px;
+    border-radius:50%;
+    border:1px solid rgba(255,255,255,0.25);
+    background:rgba(0,0,0,0.35);
+    color:#fff;
+    font-size:19px;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    backdrop-filter: blur(4px);
+  }
+  #muteBtn:active{ transform:scale(0.92); }
 </style>
+</head>
+<body>
 <div id="gameWrap">
   <canvas id="game"></canvas>
   <div class="flashOverlay" id="flash"></div>
+  <button id="muteBtn" aria-label="Silenciar sonido">🔊</button>
 
   <div id="hud" class="hidden">
     <div id="livesBox">
@@ -341,6 +367,132 @@
 
   function vibrate(ms){ if(navigator.vibrate) try{navigator.vibrate(ms);}catch(e){} }
 
+  // ---------- Audio engine (all synthesized, no external files) ----------
+  const Audio_ = (function(){
+    let ctx = null, master = null, musicGain = null, sfxGain = null;
+    let muted = false;
+    let musicTimer = null, musicStep = 0;
+    try{ muted = localStorage.getItem('bmd_muted') === '1'; }catch(e){}
+
+    function ensure(){
+      if(ctx) return;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = muted ? 0 : 1;
+      master.connect(ctx.destination);
+      musicGain = ctx.createGain(); musicGain.gain.value = 0.22; musicGain.connect(master);
+      sfxGain = ctx.createGain(); sfxGain.gain.value = 0.5; sfxGain.connect(master);
+    }
+
+    function resume(){
+      ensure();
+      if(ctx && ctx.state === 'suspended') ctx.resume().catch(()=>{});
+    }
+
+    function setMuted(m){
+      muted = m;
+      try{ localStorage.setItem('bmd_muted', m ? '1':'0'); }catch(e){}
+      if(master) master.gain.setTargetAtTime(m?0:1, ctx.currentTime, 0.03);
+    }
+    function isMuted(){ return muted; }
+
+    function tone(freq, t, dur, type, peak, dest){
+      if(!ctx) return;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak||0.3, t+0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+      osc.connect(g); g.connect(dest||sfxGain);
+      osc.start(t); osc.stop(t+dur+0.02);
+    }
+
+    function noiseBurst(t, dur, peak){
+      if(!ctx) return;
+      const bufSize = Math.floor(ctx.sampleRate * dur);
+      const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for(let i=0;i<bufSize;i++){ data[i] = (Math.random()*2-1) * (1 - i/bufSize); }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(peak||0.5, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'lowpass'; filt.frequency.setValueAtTime(1200, t);
+      src.connect(filt); filt.connect(g); g.connect(sfxGain);
+      src.start(t);
+    }
+
+    function sfxCatch(){
+      if(!ctx) return;
+      const t = ctx.currentTime;
+      tone(880, t, 0.09, 'triangle', 0.35);
+      tone(1318.5, t+0.045, 0.12, 'triangle', 0.3);
+    }
+
+    function sfxHit(){
+      if(!ctx) return;
+      const t = ctx.currentTime;
+      noiseBurst(t, 0.3, 0.55);
+      tone(90, t, 0.28, 'sawtooth', 0.4);
+      tone(55, t+0.03, 0.3, 'sine', 0.3);
+    }
+
+    function sfxWin(){
+      if(!ctx) return;
+      const t = ctx.currentTime;
+      [523.25,659.25,783.99,1046.5].forEach((f,i)=> tone(f, t+i*0.11, 0.22, 'triangle', 0.3));
+    }
+
+    function sfxLose(){
+      if(!ctx) return;
+      const t = ctx.currentTime;
+      [392,329.63,261.63].forEach((f,i)=> tone(f, t+i*0.14, 0.26, 'sawtooth', 0.22));
+    }
+
+    // tiny procedural background loop: dark minor arpeggio + bass pulse
+    const scale = [220,261.63,293.66,329.63,392,440]; // A minor-ish, night-arcade vibe
+    function scheduleMusicStep(){
+      if(!ctx) return;
+      const t = ctx.currentTime + 0.05;
+      const bassNotes = [110,110,130.81,98];
+      const bass = bassNotes[musicStep % bassNotes.length];
+      tone(bass, t, 0.5, 'sine', 0.22, musicGain);
+      const arp = scale[(musicStep*3) % scale.length];
+      tone(arp, t+0.0, 0.16, 'square', 0.07, musicGain);
+      tone(scale[(musicStep*3+2) % scale.length], t+0.25, 0.16, 'square', 0.06, musicGain);
+      musicStep++;
+      const stepDur = Math.max(260, 520 - (fallSpeedMul*30)); // tempo creeps up with difficulty
+      musicTimer = setTimeout(scheduleMusicStep, stepDur);
+    }
+
+    function startMusic(){
+      ensure(); resume();
+      if(!ctx || musicTimer) return;
+      musicStep = 0;
+      scheduleMusicStep();
+    }
+    function stopMusic(){
+      if(musicTimer){ clearTimeout(musicTimer); musicTimer = null; }
+    }
+
+    return { ensure, resume, setMuted, isMuted, sfxCatch, sfxHit, sfxWin, sfxLose, startMusic, stopMusic };
+  })();
+
+  const muteBtn = document.getElementById('muteBtn');
+  function refreshMuteBtn(){ muteBtn.textContent = Audio_.isMuted() ? '🔇' : '🔊'; }
+  refreshMuteBtn();
+  muteBtn.addEventListener('click', ()=>{
+    Audio_.resume();
+    Audio_.setMuted(!Audio_.isMuted());
+    refreshMuteBtn();
+  });
+
   function hitBad(){
     lives -= 1;
     player.invuln = 1.1;
@@ -348,8 +500,9 @@
     flashEl.style.background = 'rgba(255,40,40,0.55)';
     setTimeout(()=>{ flashEl.style.background = 'rgba(255,40,40,0.0)'; }, 140);
     vibrate(90);
+    Audio_.sfxHit();
     updateHUD();
-    if(lives <= 0){ endGame(false); }
+    if(lives <= 0){ Audio_.stopMusic(); Audio_.sfxLose(); endGame(false); }
   }
 
   function catchHeart(x,y){
@@ -359,8 +512,9 @@
     badRatio = Math.min(0.56, badRatio + 0.008);
     spawnBurst(x,y,'❤️',6);
     vibrate(22);
+    Audio_.sfxCatch();
     updateHUD();
-    if(score >= TARGET_SCORE){ endGame(true); }
+    if(score >= TARGET_SCORE){ Audio_.stopMusic(); Audio_.sfxWin(); endGame(true); }
   }
 
   function drawTNT(cx, cy, size, rot){
@@ -549,6 +703,7 @@
   }
 
   function startGame(){
+    Audio_.resume();
     resetGame();
     initStars();
     showOnly(null);
@@ -556,6 +711,7 @@
     running = true;
     lastTime = 0;
     requestAnimationFrame(loop);
+    Audio_.startMusic();
   }
 
   function endGame(won){
@@ -637,3 +793,6 @@
   resetPlayerPos();
 })();
 </script>
+
+</body>
+</html>
